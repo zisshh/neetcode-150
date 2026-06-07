@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Scaffold a problem folder from a LeetCode URL or slug.
+#   ./new https://leetcode.com/problems/two-sum/
+#   ./new two-sum
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$DIR/tools/fetch.py" "$@"

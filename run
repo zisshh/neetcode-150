@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Compile and run a problem's example tests.
+#   ./run 0001-two-sum
+#   ./run 0001-two-sum/      (trailing slash ok)
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ $# -lt 1 ]; then
+  echo "usage: ./run <problem-folder>" >&2
+  exit 1
+fi
+
+PROB="${1%/}"
+SRC="$DIR/$PROB/tests.cpp"
+if [ ! -f "$SRC" ]; then
+  echo "no tests.cpp in '$PROB'" >&2
+  exit 1
+fi
+
+BIN="$DIR/$PROB/.test_bin"
+CXX="${CXX:-clang++}"
+
+echo ">> compiling $PROB ..."
+"$CXX" -std=c++20 -O0 -g -Wall -Wextra "$SRC" -o "$BIN"
+echo ">> running ..."
+"$BIN" "${@:2}"
