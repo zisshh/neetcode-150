@@ -159,19 +159,32 @@ def parse_meta(q: dict):
 
 def lc_type(t: str):
     """Map a LeetCode type to (cpp_type, scalar_base, dims), or None if we
-    can't build a literal for it (e.g. ListNode, TreeNode)."""
+    can't build a literal for it (e.g. ListNode, TreeNode).
+
+    Handles both notations LeetCode mixes: `integer[]` / `string[][]` and
+    `list<integer>` / `list<list<string>>`.
+    """
     t0 = (t or "").strip()
-    dims = 0
-    while t0.endswith("[]"):
-        dims += 1
-        t0 = t0[:-2].strip()
-    if t0 not in SCALARS:
-        return None
-    cpp = SCALARS[t0]
-    base = cpp
-    for _ in range(dims):
-        cpp = f"vector<{cpp}>"
-    return cpp, base, dims
+    # list<X> -> one more vector dimension around X
+    m = re.match(r"^list<(.+)>$", t0)
+    if m:
+        inner = lc_type(m.group(1))
+        if inner is None:
+            return None
+        cpp, base, dims = inner
+        return f"vector<{cpp}>", base, dims + 1
+    # X[] -> one more vector dimension around X
+    if t0.endswith("[]"):
+        inner = lc_type(t0[:-2].strip())
+        if inner is None:
+            return None
+        cpp, base, dims = inner
+        return f"vector<{cpp}>", base, dims + 1
+    # scalar
+    if t0 in SCALARS:
+        s = SCALARS[t0]
+        return s, s, 0
+    return None
 
 
 def lc_value_to_cpp(raw: str, base: str, dims: int) -> str:
