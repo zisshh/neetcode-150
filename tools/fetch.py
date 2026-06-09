@@ -127,6 +127,173 @@ def parse_method(snippet: str):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Example cases -> doctest TEST_CASEs
+#
+# LeetCode gives us metaData (function name + param/return types) and
+# exampleTestcases (raw inputs, one value per line). Expected outputs are
+# scraped from the description ("Output: ..."). We convert each value to a
+# C++ literal by type. Types we can't express as a literal (ListNode*,
+# TreeNode*, ...) trigger a hand-written fallback skeleton.
+# ---------------------------------------------------------------------------
+SCALARS = {
+    "integer": "int", "int": "int", "long": "long",
+    "double": "double", "float": "double",
+    "boolean": "bool", "string": "string", "character": "char",
+}
+
+
+def parse_meta(q: dict):
+    """Return (name, params, return_type) from metaData, or None."""
+    try:
+        md = json.loads(q.get("metaData") or "{}")
+    except Exception:
+        return None
+    name = md.get("name")
+    params = md.get("params")
+    ret = (md.get("return") or {}).get("type")
+    if not name or params is None or ret is None:
+        return None
+    return name, params, ret
+
+
+def lc_type(t: str):
+    """Map a LeetCode type to (cpp_type, scalar_base, dims), or None if we
+    can't build a literal for it (e.g. ListNode, TreeNode)."""
+    t0 = (t or "").strip()
+    dims = 0
+    while t0.endswith("[]"):
+        dims += 1
+        t0 = t0[:-2].strip()
+    if t0 not in SCALARS:
+        return None
+    cpp = SCALARS[t0]
+    base = cpp
+    for _ in range(dims):
+        cpp = f"vector<{cpp}>"
+    return cpp, base, dims
+
+
+def lc_value_to_cpp(raw: str, base: str, dims: int) -> str:
+    """Convert a LeetCode JSON-ish value to a C++ initializer."""
+    raw = raw.strip()
+    if dims > 0:
+        # JSON array -> brace-init by swapping brackets.
+        v = raw.replace("[", "{").replace("]", "}")
+        if base == "char":               # {"a","b"} -> {'a','b'}
+            v = re.sub(r'"(.)"', r"'\1'", v)
+        return v
+    if base == "char":                   # "a" -> 'a'
+        m = re.match(r'^"(.*)"$', raw)
+        return "'" + (m.group(1) if m else raw) + "'"
+    if base == "string":                 # ensure quoted
+        if not (raw.startswith('"') and raw.endswith('"')):
+            return '"' + raw + '"'
+        return raw
+    return raw                           # int / long / double / bool
+
+
+def parse_outputs(content: str):
+    if not content:
+        return []
+    text = html.unescape(strip_tags(content))
+    return [m.strip() for m in re.findall(r"Output:\s*([^\n]+)", text)]
+
+
+TESTS_HEADER = (
+    "#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN\n"
+    '#include "../lib/doctest.h"\n'
+    '#include "solution.cpp"\n\n'
+)
+
+
+def fallback_tests(q: dict, raw: str, outputs) -> str:
+    """Skeleton for problems whose types we can't auto-wire."""
+    fid = int(q["questionFrontendId"])
+    out = [
+        "// Couldn't auto-build typed example cases for this problem — its",
+        "// inputs/outputs use types like ListNode*/TreeNode* that need manual",
+        "// construction. The raw examples are below; wire them up by hand.",
+        "// See TESTING_GUIDE.md.",
+        "//",
+    ]
+    sig = parse_method(cpp_snippet(q))
+    if sig:
+        rtype, fname, params = sig
+        out += [f"// signature: {rtype} Solution::{fname}({params})", "//"]
+    if raw:
+        out.append("/* raw inputs (grouped per example, one value per line):")
+        out += raw.splitlines()
+        out.append("*/")
+    if outputs:
+        out.append("/* expected outputs (in order):")
+        out += outputs
+        out.append("*/")
+    out += [
+        "",
+        f'TEST_CASE("{fid:04d} examples") {{',
+        "  Solution sol;",
+        "  // TODO: build inputs + expected values by hand, then CHECK(...)",
+        "}",
+    ]
+    return TESTS_HEADER + "\n".join(out) + "\n"
+
+
+def build_tests(q: dict) -> str:
+    meta = parse_meta(q)
+    raw = (q.get("exampleTestcases") or "").strip()
+    outputs = parse_outputs(q.get("content") or "")
+    if not meta or not raw:
+        return fallback_tests(q, raw, outputs)
+
+    name, params, ret = meta
+    ret_info = lc_type(ret)
+    pinfos = [lc_type(p.get("type", "")) for p in params]
+    if ret_info is None or any(pi is None for pi in pinfos):
+        return fallback_tests(q, raw, outputs)
+
+    nparams = len(params)
+    lines = raw.splitlines()
+    groups = [lines[i:i + nparams] for i in range(0, len(lines), nparams)] if nparams else []
+    fid = int(q["questionFrontendId"])
+    ret_cpp, ret_base, ret_dims = ret_info
+
+    blocks = []
+    for idx in range(min(len(groups), len(outputs))):
+        grp = groups[idx]
+        if len(grp) < nparams:
+            break
+        decls = []
+        for p, pi, line in zip(params, pinfos, grp):
+            pcpp, pbase, pdims = pi
+            val = lc_value_to_cpp(line, pbase, pdims)
+            decls.append(f"  {pcpp} {p['name']} = {val};")
+        exp = lc_value_to_cpp(outputs[idx], ret_base, ret_dims)
+        expected = f"({ret_cpp}{exp})" if ret_dims > 0 else exp
+        call = f"sol.{name}(" + ", ".join(p["name"] for p in params) + ")"
+        blocks.append(
+            f'TEST_CASE("{fid:04d} example {idx + 1}") {{\n'
+            f"  Solution sol;\n"
+            + "\n".join(decls) + "\n"
+            f"  CHECK({call} == {expected});\n"
+            f"}}\n"
+        )
+
+    if not blocks:
+        return fallback_tests(q, raw, outputs)
+
+    preamble = (
+        "// Example cases from the problem description, wired up for you.\n"
+        "// Add your own TEST_CASEs below.\n"
+        "//\n"
+        "// Heads up: a few problems accept answers in any order (e.g. Group\n"
+        "// Anagrams) or any valid pair (Two Sum). If a correct solution fails an\n"
+        "// equality CHECK, the expected value below is just LeetCode's sample —\n"
+        "// sort both sides or adjust the check. See TESTING_GUIDE.md.\n\n"
+    )
+    return TESTS_HEADER + preamble + "\n".join(blocks)
+
+
 def build_readme(q: dict) -> str:
     fid = q["questionFrontendId"]
     title = q["title"]
@@ -235,17 +402,32 @@ def main():
         sys.exit("usage: ./new <leetcode-url-or-slug>")
     slug = slug_from_arg(sys.argv[1])
     q = fetch(slug)
-    folder = os.path.join(ROOT, folder_name(q))
-    if os.path.exists(folder):
-        sys.exit(f"exists already: {folder_name(q)}  (delete it to regenerate)")
-    os.makedirs(folder)
-    snippet = cpp_snippet(q)
-    write(os.path.join(folder, "README.md"), build_readme(q))
-    write(os.path.join(folder, "solution.cpp"), build_solution(q, snippet))
-    print(f"created {folder_name(q)}/")
-    print(f"  README.md      problem description + raw example test data")
-    print(f"  solution.cpp   <- solve here")
-    print(f"  (write tests.cpp yourself — see TESTING_GUIDE.md, then ./run {folder_name(q)})")
+    fname = folder_name(q)
+    folder = os.path.join(ROOT, fname)
+    tests_path = os.path.join(folder, "tests.cpp")
+    is_new = not os.path.exists(folder)
+
+    if is_new:
+        os.makedirs(folder)
+        write(os.path.join(folder, "README.md"), build_readme(q))
+        write(os.path.join(folder, "solution.cpp"), build_solution(q, cpp_snippet(q)))
+
+    # tests.cpp: only write if missing, so a hand-written one is never clobbered.
+    wrote_tests = not os.path.exists(tests_path)
+    if wrote_tests:
+        write(tests_path, build_tests(q))
+
+    if is_new:
+        print(f"created {fname}/")
+        print(f"  README.md      problem description + raw example test data")
+        print(f"  solution.cpp   <- solve here")
+        print(f"  tests.cpp      example cases pre-filled (add your own), then ./run {fname}")
+    elif wrote_tests:
+        print(f"{fname}/ already existed — added tests.cpp with example cases")
+        print(f"  (solution.cpp + README.md left untouched). Now: ./run {fname}")
+    else:
+        print(f"nothing to do: {fname}/ already has tests.cpp")
+        print(f"  to regenerate it from the examples:  mv {fname}/tests.cpp /tmp/ && ./new {slug}")
 
 
 if __name__ == "__main__":

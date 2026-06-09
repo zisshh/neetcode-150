@@ -31,17 +31,19 @@ GraphQL API and scaffolds a folder named `NNNN-slug/` containing:
 |---------------|------------------------------------------------------------------------|
 | `README.md`   | the scraped problem — description, constraints, examples, raw test data |
 | `solution.cpp`| an **empty signature stub** of the exact function I have to implement   |
+| `tests.cpp`   | the problem's **own example cases**, pre-wired as `CHECK`s — I add my own on top |
 
-It does **not** write tests for me — that's the point, I want to think about the
-cases myself.
+The example cases are just a starting point — the real thinking is the edge cases
+I add myself. For problems with `ListNode*`/`TreeNode*` inputs, the examples can't
+be auto-built, so `tests.cpp` instead holds the raw data in comments + a `TODO`.
 
 ### Step 2 — solve it
 
 1. Read `NNNN-slug/README.md` — the full problem, scraped from LeetCode.
 2. Write my solution inside `NNNN-slug/solution.cpp` (fill in the empty stub).
-3. Write `NNNN-slug/tests.cpp` by hand — turn the examples into `CHECK(...)`
-   assertions. See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for the skeleton and
-   the doctest macros.
+3. Open `NNNN-slug/tests.cpp` — the example cases are already there. Add my own
+   edge-case `CHECK(...)`s. See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for the
+   doctest macros and input/output shapes.
 
 ### Step 3 — `./run <folder>` compiles + tests locally
 
